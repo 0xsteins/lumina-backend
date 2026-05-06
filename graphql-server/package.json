@@ -1,0 +1,25 @@
+{
+  "name": "@lumina/graphql-server",
+  "version": "0.1.0",
+  "description": "Apollo GraphQL server exposing indexed Stellar network data",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "codegen": "graphql-codegen --config codegen.yml"
+  },
+  "dependencies": {
+    "@apollo/server": "^4.0.0",
+    "graphql": "^16.0.0",
+    "pg": "^8.0.0",
+    "graphql-tag": "^2.0.0",
+    "dataloader": "^2.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.0.0",
+    "ts-node": "^10.0.0"
+  }
+}
