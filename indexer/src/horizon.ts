@@ -3,7 +3,7 @@
  * graphql-server's Horizon clients so this service has no cross-package imports.
  */
 
-const PAGE_LIMIT = 200;
+export const PAGE_LIMIT = 200;
 
 export interface HorizonLedger {
   sequence: number;
@@ -53,7 +53,7 @@ async function fetchAllPages<T>(url: string): Promise<T[]> {
   const records: T[] = [];
   let next: string | undefined = url;
   while (next) {
-    const page = await fetchJson<HorizonPage<T>>(next);
+    const page: HorizonPage<T> = await fetchJson<HorizonPage<T>>(next);
     records.push(...page._embedded.records);
     next = page._embedded.records.length === PAGE_LIMIT ? page._links.next?.href : undefined;
   }
