@@ -1,6 +1,13 @@
 -- Lumina PostgreSQL Schema
 -- Run this to initialize the database: psql $DATABASE_URL -f db/schema.sql
 
+-- ─── Migrations bookkeeping ───────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version             TEXT PRIMARY KEY,
+    applied_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ─── Ledgers ──────────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS ledgers (
