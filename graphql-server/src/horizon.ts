@@ -65,7 +65,7 @@ export async function getAccountTransactions(address: string, limit = 10): Promi
 }
 
 export async function getLatestLedger() {
-  type R = { _embedded: { records: Array<{ sequence: number; closed_at: string; transaction_count: number; operation_count: number }> } };
+  type R = { _embedded: { records: Array<{ sequence: number; closed_at: string; successful_transaction_count: number; failed_transaction_count: number; operation_count: number }> } };
   const data = await get<R>('/ledgers?order=desc&limit=1');
   return data?._embedded?.records?.[0] ?? null;
 }
