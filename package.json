@@ -1,0 +1,21 @@
+{
+  "name": "lumina-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stellar event indexer + GraphQL API for Lumina",
+  "workspaces": [
+    "graphql-server",
+    "indexer"
+  ],
+  "scripts": {
+    "build": "npm run build:graphql && npm run build:indexer",
+    "build:graphql": "cd graphql-server && npm run build",
+    "build:indexer": "cd indexer && npm run build",
+    "test": "npm run test:indexer && npm run test:graphql",
+    "test:indexer": "cd indexer && npm test",
+    "test:graphql": "cd graphql-server && npm test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,51 @@
+version: "3.9"
+
+services:
+  # PostgreSQL — stores indexed Stellar network data
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lumina
+      POSTGRES_USER: lumina
+      POSTGRES_PASSWORD: lumina_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+
+  # Lumina Indexer — polls Horizon and writes to PostgreSQL
+  indexer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.indexer
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://lumina:lumina_dev@postgres:5432/lumina
+      HORIZON_URL: https://horizon.stellar.org
+      POLL_INTERVAL_MS: "5000"
+    # Uncomment to start from a specific ledger:
+    # START_LEDGER: "52000000"
+    # Uncomment to enable Soroban contract event indexing:
+    # SOROBAN_RPC_URL: "https://soroban-testnet.stellar.org"
+    # INDEXED_CONTRACT_IDS: "CABC...,CDEF..."
+
+  # Lumina GraphQL Server — serves indexed data via GraphQL API
+  graphql:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.graphql
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://lumina:lumina_dev@postgres:5432/lumina
+      PORT: "4000"
+    ports:
+      - "4000:4000"
+
+volumes:
+  postgres_data:

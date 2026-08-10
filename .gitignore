@@ -1,0 +1,14 @@
+# Node
+node_modules/
+.env
+.env.local
+.env*.local
+
+# TypeScript compiled output
+dist/
+*.js.map
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
