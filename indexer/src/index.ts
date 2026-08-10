@@ -12,12 +12,17 @@
  *   DATABASE_URL         — PostgreSQL connection string
  *   START_LEDGER         — Ledger to begin indexing from if the DB is empty (default: latest)
  *   POLL_INTERVAL_MS     — How often to poll for new ledgers (default: 5000)
- *   SOROBAN_RPC_URL      — Soroban RPC endpoint; unset disables contract event indexing
- *   INDEXED_CONTRACT_IDS — Comma-separated contract IDs to index events for (requires SOROBAN_RPC_URL)
+ *   SOROBAN_RPC_URL           — Soroban RPC endpoint; unset disables contract event indexing
+ *   INDEXED_CONTRACT_IDS      — Comma-separated contract IDs to index events for (requires SOROBAN_RPC_URL)
+ *   REGISTRY_CONTRACT_ID      — Lumina Registry contract to poll for additional contract IDs (requires SOROBAN_RPC_URL + REGISTRY_READ_ACCOUNT)
+ *   REGISTRY_READ_ACCOUNT     — Any funded account address used to simulate the registry's read calls (no secret key needed)
+ *   REGISTRY_NETWORK_PASSPHRASE — Network passphrase for registry simulation (default: Test SDF Network passphrase)
  */
 
+import { Networks } from '@stellar/stellar-sdk';
 import { createPool, getLatestIndexedLedger, indexLedger, insertContractEvents } from './db';
 import { getAccount, getLatestLedgerSequence, getLedger, getLedgerOperations, getLedgerTransactions, HorizonAccount } from './horizon';
+import { getActiveContracts } from './registry';
 import { getEvents } from './soroban';
 
 const HORIZON_URL = process.env.HORIZON_URL ?? 'https://horizon.stellar.org';
@@ -33,10 +38,19 @@ const INDEXED_CONTRACT_IDS = (process.env.INDEXED_CONTRACT_IDS ?? '')
   .map(id => id.trim())
   .filter(Boolean);
 
+// Registry-based discovery is opt-in on top of the opt-in event indexing above —
+// unset, the indexer relies solely on the static INDEXED_CONTRACT_IDS list.
+const REGISTRY_CONTRACT_ID = process.env.REGISTRY_CONTRACT_ID;
+const REGISTRY_READ_ACCOUNT = process.env.REGISTRY_READ_ACCOUNT;
+const REGISTRY_NETWORK_PASSPHRASE = process.env.REGISTRY_NETWORK_PASSPHRASE ?? Networks.TESTNET;
+const REGISTRY_POLL_EVERY_N_TICKS = 12; // ~once/minute at the default 5s poll interval
+
 const LEDGER_RETRY_ATTEMPTS = 3;
 const LEDGER_RETRY_BASE_MS = 500;
 
 const pool = createPool(DATABASE_URL);
+let discoveredContractIds: string[] = [];
+let loopTick = 0;
 
 async function fetchAndIndexLedger(sequence: number): Promise<void> {
   console.log(`Indexing ledger ${sequence}...`);
@@ -74,11 +88,28 @@ async function fetchAndIndexLedgerWithRetry(sequence: number): Promise<void> {
   }
 }
 
+/** Refreshes the set of contract IDs discovered from the Lumina Registry, if configured. */
+async function pollRegistry(): Promise<void> {
+  if (!SOROBAN_RPC_URL || !REGISTRY_CONTRACT_ID || !REGISTRY_READ_ACCOUNT) return;
+  try {
+    discoveredContractIds = await getActiveContracts(
+      SOROBAN_RPC_URL,
+      REGISTRY_CONTRACT_ID,
+      REGISTRY_READ_ACCOUNT,
+      REGISTRY_NETWORK_PASSPHRASE
+    );
+    console.log(`Registry discovery: ${discoveredContractIds.length} active contract(s)`);
+  } catch (err) {
+    console.error('Registry polling error:', err);
+  }
+}
+
 /** Fetches and stores contract events for the ledger range just processed by the Horizon poll loop. */
 async function pollContractEvents(fromLedger: number): Promise<void> {
-  if (!SOROBAN_RPC_URL || INDEXED_CONTRACT_IDS.length === 0) return;
+  const contractIds = [...new Set([...INDEXED_CONTRACT_IDS, ...discoveredContractIds])];
+  if (!SOROBAN_RPC_URL || contractIds.length === 0) return;
   try {
-    const events = await getEvents(SOROBAN_RPC_URL, INDEXED_CONTRACT_IDS, fromLedger);
+    const events = await getEvents(SOROBAN_RPC_URL, contractIds, fromLedger);
     if (events.length > 0) {
       console.log(`Indexing ${events.length} contract event(s) from ledger ${fromLedger}...`);
       await insertContractEvents(pool, events);
@@ -106,6 +137,11 @@ async function run() {
 
   while (true) {
     try {
+      if (loopTick % REGISTRY_POLL_EVERY_N_TICKS === 0) {
+        await pollRegistry();
+      }
+      loopTick++;
+
       const latest = await getLatestLedgerSequence(HORIZON_URL);
       const rangeStart = cursor + 1;
 
