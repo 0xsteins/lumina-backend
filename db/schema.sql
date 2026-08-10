@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     sequence            TEXT NOT NULL,
     subentry_count      INTEGER NOT NULL DEFAULT 0,
     last_modified_ledger BIGINT NOT NULL,
+    num_sponsored       INTEGER NOT NULL DEFAULT 0,
+    num_sponsoring      INTEGER NOT NULL DEFAULT 0,
     balances            JSONB NOT NULL DEFAULT '[]',
     flags               JSONB NOT NULL DEFAULT '{}',
     thresholds          JSONB NOT NULL DEFAULT '{}',
@@ -80,6 +82,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 CREATE TABLE IF NOT EXISTS contract_events (
     id                  TEXT PRIMARY KEY,
+    type                TEXT NOT NULL DEFAULT 'contract',
     contract_id         TEXT NOT NULL,
     ledger              BIGINT NOT NULL,
     created_at          TIMESTAMPTZ NOT NULL,

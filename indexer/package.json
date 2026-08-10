@@ -7,12 +7,13 @@
     "dev": "ts-node src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "node --require ts-node/register --test src/horizon.test.ts src/db.test.ts"
+    "test": "node --require ts-node/register --test src/horizon.test.ts src/db.test.ts src/soroban.test.ts"
   },
   "dependencies": {
     "pg": "^8.0.0",
     "node-fetch": "^3.0.0",
-    "pino": "^8.0.0"
+    "pino": "^8.0.0",
+    "@stellar/stellar-sdk": "^16.0.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0",

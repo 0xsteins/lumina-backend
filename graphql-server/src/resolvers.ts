@@ -1,25 +1,77 @@
-// Horizon helpers live in graphql-server/src/horizon.ts (own copy, independent of frontend)
-// TODO: replace these Horizon calls with PostgreSQL queries once the indexer is running
-import { getRecentTransactions, getAccount, getAccountTransactions, getLatestLedger } from './horizon';
+import type { Pool } from 'pg';
+import {
+  getAccountFromDb,
+  getAccountOperations,
+  getAccountTransactions,
+  getEventsByContract,
+  getLatestLedgerFromDb,
+  getLedgerBySequence,
+  getOperations,
+  getOperationsByTransactionHash,
+  getTransactionByHash,
+  getTransactions,
+  mapAccount,
+} from './db';
+import { getAccount as getAccountFromHorizon, getLatestLedger as getLatestLedgerFromHorizon } from './horizon';
+
+export interface Context {
+  pool: Pool;
+}
 
 /**
- * GraphQL resolvers for the Lumina schema.
- *
- * NOTE: These currently delegate to the Horizon REST API in lib/horizon.ts.
- * The intended architecture is:
- *   1. indexer/ polls Horizon and writes to PostgreSQL
- *   2. resolvers query PostgreSQL for fast, historical data
- *   3. Horizon is only hit as a fallback for non-indexed data
- *
- * Contributors: replace the Horizon calls with db/ queries once the indexer
- * and PostgreSQL schema are implemented.
+ * Lumina GraphQL resolvers — backed by PostgreSQL (populated by indexer/).
+ * Horizon is used only as an explicit fallback: an account that hasn't been
+ * indexed yet (indexer only writes accounts it's seen activity for), or a
+ * fresh database with no ledgers indexed yet.
  */
+async function resolveAccount(address: string, pool: Pool) {
+  const fromDb = await getAccountFromDb(pool, address);
+  if (fromDb) return fromDb;
+
+  const horizonAccount = await getAccountFromHorizon(address);
+  if (!horizonAccount) return null;
+  return mapAccount({
+    address: horizonAccount.account_id,
+    sequence: horizonAccount.sequence,
+    subentry_count: horizonAccount.subentry_count,
+    last_modified_ledger: horizonAccount.last_modified_ledger,
+    num_sponsored: horizonAccount.num_sponsored,
+    num_sponsoring: horizonAccount.num_sponsoring,
+    balances: horizonAccount.balances,
+    flags: horizonAccount.flags,
+    thresholds: horizonAccount.thresholds,
+  });
+}
+
 export const resolvers = {
   Query: {
-    async transactions(_: unknown, args: { limit?: number; cursor?: string }) {
+    async transactions(_: unknown, args: { limit?: number; cursor?: string }, { pool }: Context) {
       const limit = args.limit ?? 20;
-      // TODO: query PostgreSQL with cursor pagination instead of Horizon
-      const items = await getRecentTransactions(limit);
+      const items = await getTransactions(pool, limit, args.cursor);
+      return {
+        items,
+        pageInfo: {
+          hasNextPage: items.length === limit,
+          cursor: items.at(-1)?.hash ?? null,
+        },
+      };
+    },
+
+    async transaction(_: unknown, args: { hash: string }, { pool }: Context) {
+      return getTransactionByHash(pool, args.hash);
+    },
+
+    async account(_: unknown, args: { address: string }, { pool }: Context) {
+      return resolveAccount(args.address, pool);
+    },
+
+    async operations(
+      _: unknown,
+      args: { account?: string; type?: string; limit?: number; cursor?: string },
+      { pool }: Context
+    ) {
+      const limit = args.limit ?? 20;
+      const items = await getOperations(pool, { account: args.account, type: args.type, limit, cursor: args.cursor });
       return {
         items,
         pageInfo: {
@@ -29,52 +81,70 @@ export const resolvers = {
       };
     },
 
-    async transaction(_: unknown, args: { hash: string }) {
-      // TODO: SELECT * FROM transactions WHERE hash = $1
-      throw new Error('Not implemented — needs PostgreSQL indexer');
+    async events(
+      _: unknown,
+      args: { contractId: string; topic?: string; limit?: number; cursor?: string },
+      { pool }: Context
+    ) {
+      const limit = args.limit ?? 20;
+      const items = await getEventsByContract(pool, { contractId: args.contractId, topic: args.topic, limit, cursor: args.cursor });
+      return {
+        items,
+        pageInfo: {
+          hasNextPage: items.length === limit,
+          cursor: items.at(-1)?.id ?? null,
+        },
+      };
     },
 
-    async account(_: unknown, args: { address: string }) {
-      return getAccount(args.address);
+    async latestLedger(_: unknown, __: unknown, { pool }: Context) {
+      const fromDb = await getLatestLedgerFromDb(pool);
+      if (fromDb) return fromDb;
+
+      const horizonLedger = await getLatestLedgerFromHorizon();
+      if (!horizonLedger) return null;
+      return {
+        sequence: horizonLedger.sequence,
+        closedAt: horizonLedger.closed_at,
+        transactionCount: horizonLedger.successful_transaction_count + horizonLedger.failed_transaction_count,
+        operationCount: horizonLedger.operation_count,
+        baseFee: 100,
+        baseReserve: 5000000,
+      };
     },
 
-    async operations(_: unknown, args: { account?: string; type?: string; limit?: number }) {
-      // TODO: query PostgreSQL operations table with account + type filter
-      throw new Error('Not implemented — needs PostgreSQL indexer');
-    },
-
-    async events(_: unknown, args: { contractId: string; topic?: string; limit?: number }) {
-      // TODO: query Soroban RPC event stream or PostgreSQL events table
-      throw new Error('Not implemented — needs Soroban event indexer');
-    },
-
-    async latestLedger() {
-      return getLatestLedger();
-    },
-
-    async ledger(_: unknown, args: { sequence: number }) {
-      // TODO: SELECT * FROM ledgers WHERE sequence = $1
-      throw new Error('Not implemented — needs PostgreSQL indexer');
+    async ledger(_: unknown, args: { sequence: number }, { pool }: Context) {
+      return getLedgerBySequence(pool, args.sequence);
     },
   },
 
   Account: {
-    async transactions(parent: { address: string }, args: { limit?: number }) {
-      return getAccountTransactions(parent.address, args.limit ?? 10);
+    async transactions(parent: { address: string }, args: { limit?: number }, { pool }: Context) {
+      return getAccountTransactions(pool, parent.address, args.limit ?? 10);
     },
-    async operations(parent: { address: string }, args: { limit?: number }) {
-      // TODO: query operations table
-      return [];
+    async operations(parent: { address: string }, args: { limit?: number }, { pool }: Context) {
+      return getAccountOperations(pool, parent.address, args.limit ?? 10);
     },
   },
 
   Transaction: {
-    async account(parent: { source_account: string }) {
-      return getAccount(parent.source_account);
+    async ledgerData(parent: { ledger: number }, _: unknown, { pool }: Context) {
+      return getLedgerBySequence(pool, parent.ledger);
     },
-    async operations(parent: { hash: string }) {
-      // TODO: query operations WHERE transaction_hash = parent.hash
-      return [];
+    async account(parent: { sourceAccount: string }, _: unknown, { pool }: Context) {
+      return resolveAccount(parent.sourceAccount, pool);
+    },
+    async operations(parent: { hash: string }, _: unknown, { pool }: Context) {
+      return getOperationsByTransactionHash(pool, parent.hash);
+    },
+  },
+
+  Operation: {
+    async transaction(parent: { transactionHash: string }, _: unknown, { pool }: Context) {
+      return getTransactionByHash(pool, parent.transactionHash);
+    },
+    async account(parent: { sourceAccount: string }, _: unknown, { pool }: Context) {
+      return resolveAccount(parent.sourceAccount, pool);
     },
   },
 };

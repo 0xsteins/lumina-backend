@@ -27,7 +27,8 @@ export interface HorizonAccount {
   num_sponsored: number;
   num_sponsoring: number;
   balances: Balance[];
-  flags: { auth_required: boolean; auth_revocable: boolean; auth_immutable: boolean };
+  flags: { auth_required: boolean; auth_revocable: boolean; auth_immutable: boolean; auth_clawback_enabled?: boolean };
+  thresholds: { low_threshold: number; med_threshold: number; high_threshold: number };
 }
 
 export interface Balance {
@@ -36,6 +37,8 @@ export interface Balance {
   asset_issuer?: string;
   balance: string;
   limit?: string;
+  buying_liabilities?: string;
+  selling_liabilities?: string;
 }
 
 async function get<T>(path: string): Promise<T | null> {

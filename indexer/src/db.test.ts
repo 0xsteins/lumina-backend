@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Pool } from 'pg';
-import { getLatestIndexedLedger, indexLedger } from './db';
-import type { HorizonLedger, HorizonOperation, HorizonTransaction } from './horizon';
+import type { Pool, PoolClient } from 'pg';
+import { getLatestIndexedEventLedger, getLatestIndexedLedger, indexLedger, insertContractEvents, upsertAccount } from './db';
+import type { HorizonAccount, HorizonLedger, HorizonOperation, HorizonTransaction } from './horizon';
+import type { ContractEvent } from './soroban';
 
 function makeFakeClient(opts: { failOn?: string } = {}) {
   const calls: string[] = [];
@@ -79,4 +80,66 @@ test('getLatestIndexedLedger returns 0 when the table is empty', async () => {
 test('getLatestIndexedLedger returns the numeric max sequence', async () => {
   const pool = { query: async () => ({ rows: [{ max: '4242' }] }) } as unknown as Pool;
   assert.equal(await getLatestIndexedLedger(pool), 4242);
+});
+
+const account: HorizonAccount = {
+  account_id: 'GABC',
+  sequence: '1',
+  subentry_count: 0,
+  last_modified_ledger: 100,
+  num_sponsored: 0,
+  num_sponsoring: 0,
+  balances: [],
+  flags: { auth_required: false, auth_revocable: false, auth_immutable: false, auth_clawback_enabled: false },
+  thresholds: { low_threshold: 0, med_threshold: 0, high_threshold: 0 },
+};
+
+test('indexLedger writes accounts inside the same commit when provided', async () => {
+  const { client, calls } = makeFakeClient();
+  await indexLedger(fakePool(client), ledger, [tx], [op], [account]);
+  assert.deepEqual(calls, ['BEGIN', 'ledgers', 'transactions', 'operations', 'accounts', 'COMMIT', 'RELEASE']);
+});
+
+test('upsertAccount inserts with an ON CONFLICT upsert', async () => {
+  const queries: string[] = [];
+  const client = { query: async (sql: string) => { queries.push(sql); return { rows: [] }; } } as unknown as PoolClient;
+  await upsertAccount(client, account);
+  assert.match(queries[0], /INSERT INTO accounts/);
+  assert.match(queries[0], /ON CONFLICT \(address\) DO UPDATE/);
+});
+
+const event: ContractEvent = {
+  id: 'evt1',
+  type: 'contract',
+  contractId: 'CABC',
+  ledger: 100,
+  createdAt: '2026-01-01T00:00:00Z',
+  pagingToken: 'token1',
+  topics: ['"swap"'],
+  value: { amount: '10' },
+};
+
+test('insertContractEvents writes one row per event', async () => {
+  const queries: string[] = [];
+  const pool = { query: async (sql: string) => { queries.push(sql); return { rows: [] }; } } as unknown as Pool;
+  await insertContractEvents(pool, [event, { ...event, id: 'evt2' }]);
+  assert.equal(queries.length, 2);
+  assert.match(queries[0], /INSERT INTO contract_events/);
+});
+
+test('insertContractEvents is a no-op for an empty list', async () => {
+  let calls = 0;
+  const pool = { query: async () => { calls++; return { rows: [] }; } } as unknown as Pool;
+  await insertContractEvents(pool, []);
+  assert.equal(calls, 0);
+});
+
+test('getLatestIndexedEventLedger returns 0 when contract_events is empty', async () => {
+  const pool = { query: async () => ({ rows: [{ max: null }] }) } as unknown as Pool;
+  assert.equal(await getLatestIndexedEventLedger(pool), 0);
+});
+
+test('getLatestIndexedEventLedger returns the numeric max ledger', async () => {
+  const pool = { query: async () => ({ rows: [{ max: '999' }] }) } as unknown as Pool;
+  assert.equal(await getLatestIndexedEventLedger(pool), 999);
 });

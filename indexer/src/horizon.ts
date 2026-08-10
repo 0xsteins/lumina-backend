@@ -36,6 +36,28 @@ export interface HorizonOperation {
   [key: string]: unknown;
 }
 
+export interface HorizonBalance {
+  asset_type: string;
+  asset_code?: string;
+  asset_issuer?: string;
+  balance: string;
+  limit?: string;
+  buying_liabilities?: string;
+  selling_liabilities?: string;
+}
+
+export interface HorizonAccount {
+  account_id: string;
+  sequence: string;
+  subentry_count: number;
+  last_modified_ledger: number;
+  num_sponsored: number;
+  num_sponsoring: number;
+  balances: HorizonBalance[];
+  flags: { auth_required: boolean; auth_revocable: boolean; auth_immutable: boolean; auth_clawback_enabled: boolean };
+  thresholds: { low_threshold: number; med_threshold: number; high_threshold: number };
+}
+
 interface HorizonPage<T> {
   _embedded: { records: T[] };
   _links: { next?: { href: string } };
@@ -79,4 +101,11 @@ export function getLedgerOperations(horizonUrl: string, sequence: number): Promi
   return fetchAllPages<HorizonOperation>(
     `${horizonUrl}/ledgers/${sequence}/operations?order=asc&limit=${PAGE_LIMIT}`
   );
+}
+
+/** Returns null (rather than throwing) for accounts that don't exist or have been merged away. */
+export async function getAccount(horizonUrl: string, address: string): Promise<HorizonAccount | null> {
+  const res = await fetch(`${horizonUrl}/accounts/${address}`);
+  if (!res.ok) return null;
+  return (await res.json()) as HorizonAccount;
 }

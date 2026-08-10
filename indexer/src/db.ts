@@ -1,5 +1,6 @@
-import { Pool } from 'pg';
-import type { HorizonLedger, HorizonOperation, HorizonTransaction } from './horizon';
+import { Pool, PoolClient } from 'pg';
+import type { HorizonAccount, HorizonLedger, HorizonOperation, HorizonTransaction } from './horizon';
+import type { ContractEvent } from './soroban';
 
 export function createPool(databaseUrl: string): Pool {
   return new Pool({ connectionString: databaseUrl });
@@ -19,7 +20,8 @@ export async function indexLedger(
   pool: Pool,
   ledger: HorizonLedger,
   transactions: HorizonTransaction[],
-  operations: HorizonOperation[]
+  operations: HorizonOperation[],
+  accounts: HorizonAccount[] = []
 ): Promise<void> {
   const client = await pool.connect();
   try {
@@ -67,6 +69,10 @@ export async function indexLedger(
       );
     }
 
+    for (const account of accounts) {
+      await upsertAccount(client, account);
+    }
+
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -74,4 +80,58 @@ export async function indexLedger(
   } finally {
     client.release();
   }
+}
+
+export async function upsertAccount(client: PoolClient, account: HorizonAccount): Promise<void> {
+  await client.query(
+    `INSERT INTO accounts (address, sequence, subentry_count, last_modified_ledger, num_sponsored, num_sponsoring, balances, flags, thresholds, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+     ON CONFLICT (address) DO UPDATE SET
+       sequence = EXCLUDED.sequence,
+       subentry_count = EXCLUDED.subentry_count,
+       last_modified_ledger = EXCLUDED.last_modified_ledger,
+       num_sponsored = EXCLUDED.num_sponsored,
+       num_sponsoring = EXCLUDED.num_sponsoring,
+       balances = EXCLUDED.balances,
+       flags = EXCLUDED.flags,
+       thresholds = EXCLUDED.thresholds,
+       updated_at = NOW()`,
+    [
+      account.account_id,
+      account.sequence,
+      account.subentry_count,
+      account.last_modified_ledger,
+      account.num_sponsored,
+      account.num_sponsoring,
+      JSON.stringify(account.balances),
+      JSON.stringify(account.flags),
+      JSON.stringify(account.thresholds),
+    ]
+  );
+}
+
+export async function insertContractEvents(pool: Pool, events: ContractEvent[]): Promise<void> {
+  if (events.length === 0) return;
+  for (const event of events) {
+    await pool.query(
+      `INSERT INTO contract_events (id, type, contract_id, ledger, created_at, paging_token, topics, value)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        event.id,
+        event.type,
+        event.contractId,
+        event.ledger,
+        event.createdAt,
+        event.pagingToken,
+        event.topics,
+        event.value === undefined ? null : JSON.stringify(event.value),
+      ]
+    );
+  }
+}
+
+export async function getLatestIndexedEventLedger(pool: Pool): Promise<number> {
+  const { rows } = await pool.query<{ max: string | null }>('SELECT MAX(ledger) AS max FROM contract_events');
+  return rows[0].max ? Number(rows[0].max) : 0;
 }
