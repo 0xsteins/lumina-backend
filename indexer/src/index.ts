@@ -56,6 +56,16 @@ const LEDGER_RETRY_BASE_MS = 500;
 const ACCOUNT_CACHE_TTL_MS = 5 * 60 * 1000;
 const ACCOUNT_CACHE_MAX_SIZE = 50_000;
 
+// getEvents' reported latestLedger is the RPC's chain-tip awareness, not a
+// guarantee that ledger's events have finished being indexed internally —
+// confirmed live: an event was missing from a response whose latestLedger
+// was already past it, then present moments later at the same startLedger.
+// Advancing the cursor straight to latestLedger + 1 can permanently skip
+// events landing right at that boundary. Re-scanning the last few ledgers
+// each poll is cheap and idempotent (insertContractEvents is ON CONFLICT
+// DO NOTHING), so hold the cursor back by a small margin instead.
+const EVENTS_SAFETY_LAG_LEDGERS = 3;
+
 const pool = createPool(DATABASE_URL);
 let discoveredContractIds: string[] = [];
 let loopTick = 0;
@@ -174,7 +184,7 @@ async function pollContractEvents(): Promise<void> {
       console.log(`Indexing ${events.length} contract event(s) from ledger ${eventsCursor}...`);
       await insertContractEvents(pool, events);
     }
-    eventsCursor = latestLedger + 1;
+    eventsCursor = Math.max(eventsCursor, latestLedger - EVENTS_SAFETY_LAG_LEDGERS + 1);
   } catch (err) {
     console.error('Contract event polling error:', err);
   }
