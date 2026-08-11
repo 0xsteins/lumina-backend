@@ -63,7 +63,27 @@ interface HorizonPage<T> {
   _links: { next?: { href: string } };
 }
 
+// A ledger's account fetches all fire via Promise.all — fine on average
+// volume, but a busy ledger with dozens of unique accounts sends that many
+// concurrent requests in one instant and trips Horizon's per-IP rate limit
+// even when nowhere near it on average (confirmed live: sustained 429s on
+// the deployed indexer's IP despite the 5-minute account cache). Serializing
+// every outbound Horizon request through one gate with a minimum spacing
+// turns that burst into a paced stream instead.
+const MIN_REQUEST_INTERVAL_MS = parseInt(process.env.HORIZON_MIN_REQUEST_INTERVAL_MS ?? '100', 10);
+let horizonGate: Promise<void> = Promise.resolve();
+
+async function throttle(): Promise<void> {
+  const previous = horizonGate;
+  let release!: () => void;
+  horizonGate = new Promise(r => { release = r; });
+  await previous;
+  await new Promise(r => setTimeout(r, MIN_REQUEST_INTERVAL_MS));
+  release();
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
+  await throttle();
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`Horizon request failed (${res.status}): ${url}`);
@@ -105,7 +125,11 @@ export function getLedgerOperations(horizonUrl: string, sequence: number): Promi
 
 /** Returns null (rather than throwing) for accounts that don't exist or have been merged away. */
 export async function getAccount(horizonUrl: string, address: string): Promise<HorizonAccount | null> {
+  await throttle();
   const res = await fetch(`${horizonUrl}/accounts/${address}`);
-  if (!res.ok) return null;
+  if (!res.ok) {
+    if (res.status !== 404) console.warn(`Horizon account fetch failed (${res.status}) for ${address}`);
+    return null;
+  }
   return (await res.json()) as HorizonAccount;
 }
