@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getEvents } from './soroban';
+import { getEvents, getLatestLedgerSequence } from './soroban';
 
 // Real XDR fixtures: ScSymbol("swap") and ScMap({ amount: "1000" }), generated via
 // @stellar/stellar-sdk's nativeToScVal so decoding is exercised against real wire format.
@@ -15,14 +15,14 @@ function mockFetchOnce(body: unknown, ok = true) {
   })) as unknown as typeof fetch;
 }
 
-test('getEvents returns [] without making a request when no contract IDs are given', async () => {
+test('getEvents returns latestLedger=startLedger without making a request when no contract IDs are given', async () => {
   let called = false;
   (global as unknown as { fetch: typeof fetch }).fetch = (async () => {
     called = true;
     throw new Error('should not be called');
   }) as unknown as typeof fetch;
-  const events = await getEvents('https://rpc.example.com', [], 100);
-  assert.deepEqual(events, []);
+  const result = await getEvents('https://rpc.example.com', [], 100);
+  assert.deepEqual(result, { events: [], latestLedger: 100 });
   assert.equal(called, false);
 });
 
@@ -47,7 +47,8 @@ test('getEvents decodes ScVal topics and values from a real RPC response shape',
     },
   });
 
-  const events = await getEvents('https://rpc.example.com', ['CABC'], 100);
+  const { events, latestLedger } = await getEvents('https://rpc.example.com', ['CABC'], 100);
+  assert.equal(latestLedger, 105);
   assert.equal(events.length, 1);
   assert.equal(events[0].id, 'evt1');
   assert.equal(events[0].contractId, 'CABC');
@@ -56,10 +57,11 @@ test('getEvents decodes ScVal topics and values from a real RPC response shape',
   assert.deepEqual(events[0].value, { amount: '1000' });
 });
 
-test('getEvents returns [] when the RPC result has no events', async () => {
+test('getEvents returns [] events (but a real latestLedger) when the RPC result has none', async () => {
   mockFetchOnce({ jsonrpc: '2.0', id: 1, result: { latestLedger: 105 } });
-  const events = await getEvents('https://rpc.example.com', ['CABC'], 100);
+  const { events, latestLedger } = await getEvents('https://rpc.example.com', ['CABC'], 100);
   assert.deepEqual(events, []);
+  assert.equal(latestLedger, 105);
 });
 
 test('getEvents throws on a JSON-RPC error response', async () => {
@@ -70,4 +72,14 @@ test('getEvents throws on a JSON-RPC error response', async () => {
 test('getEvents throws on a non-OK HTTP response', async () => {
   mockFetchOnce({}, false);
   await assert.rejects(() => getEvents('https://rpc.example.com', ['CABC'], 100));
+});
+
+test('getLatestLedgerSequence returns the sequence from a real getLatestLedger response shape', async () => {
+  mockFetchOnce({
+    jsonrpc: '2.0',
+    id: 1,
+    result: { id: 'abc123', protocolVersion: 27, sequence: 4081327 },
+  });
+  const sequence = await getLatestLedgerSequence('https://rpc.example.com');
+  assert.equal(sequence, 4081327);
 });

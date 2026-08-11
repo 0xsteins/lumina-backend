@@ -20,10 +20,10 @@
  */
 
 import { Networks } from '@stellar/stellar-sdk';
-import { createPool, getLatestIndexedLedger, indexLedger, insertContractEvents } from './db';
+import { createPool, getLatestIndexedEventLedger, getLatestIndexedLedger, indexLedger, insertContractEvents } from './db';
 import { getAccount, getLatestLedgerSequence, getLedger, getLedgerOperations, getLedgerTransactions, HorizonAccount } from './horizon';
 import { getActiveContracts } from './registry';
-import { getEvents } from './soroban';
+import { getEvents, getLatestLedgerSequence as getLatestRpcLedgerSequence } from './soroban';
 
 const HORIZON_URL = process.env.HORIZON_URL ?? 'https://horizon.stellar.org';
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://localhost:5432/lumina';
@@ -48,9 +48,26 @@ const REGISTRY_POLL_EVERY_N_TICKS = 12; // ~once/minute at the default 5s poll i
 const LEDGER_RETRY_ATTEMPTS = 3;
 const LEDGER_RETRY_BASE_MS = 500;
 
+// How long an account's Horizon data is considered fresh enough to skip
+// re-fetching. Busy accounts (exchanges, bots) show up in most ledgers —
+// without this, the indexer re-fetches the same accounts every ~5s and
+// floods Horizon's per-IP rate limit, which then also breaks the GraphQL
+// server's own account lookups sharing that limit.
+const ACCOUNT_CACHE_TTL_MS = 5 * 60 * 1000;
+const ACCOUNT_CACHE_MAX_SIZE = 50_000;
+
 const pool = createPool(DATABASE_URL);
 let discoveredContractIds: string[] = [];
 let loopTick = 0;
+let eventsCursor = 0;
+const accountCache = new Map<string, number>(); // address -> last-fetched-at
+
+function pruneAccountCache(now: number): void {
+  if (accountCache.size < ACCOUNT_CACHE_MAX_SIZE) return;
+  for (const [address, fetchedAt] of accountCache) {
+    if (now - fetchedAt > ACCOUNT_CACHE_TTL_MS) accountCache.delete(address);
+  }
+}
 
 async function fetchAndIndexLedger(sequence: number): Promise<void> {
   console.log(`Indexing ledger ${sequence}...`);
@@ -64,9 +81,17 @@ async function fetchAndIndexLedger(sequence: number): Promise<void> {
   for (const tx of transactions) addresses.add(tx.source_account);
   for (const op of operations) addresses.add(op.source_account);
 
+  const now = Date.now();
+  pruneAccountCache(now);
+  const addressesToFetch = [...addresses].filter(address => {
+    const fetchedAt = accountCache.get(address);
+    return fetchedAt === undefined || now - fetchedAt > ACCOUNT_CACHE_TTL_MS;
+  });
+
   const accounts = (
-    await Promise.all([...addresses].map(address => getAccount(HORIZON_URL, address)))
+    await Promise.all(addressesToFetch.map(address => getAccount(HORIZON_URL, address)))
   ).filter((a): a is HorizonAccount => a !== null);
+  for (const address of addressesToFetch) accountCache.set(address, now);
 
   await indexLedger(pool, ledger, transactions, operations, accounts);
 }
@@ -104,16 +129,36 @@ async function pollRegistry(): Promise<void> {
   }
 }
 
-/** Fetches and stores contract events for the ledger range just processed by the Horizon poll loop. */
-async function pollContractEvents(fromLedger: number): Promise<void> {
+/**
+ * Fetches and stores contract events, tracking its own ledger cursor on
+ * whatever network SOROBAN_RPC_URL points to — independent of the Horizon
+ * loop's cursor, which may be a different network entirely (e.g. mainnet
+ * transactions/ledgers alongside a testnet-deployed registry contract).
+ */
+async function pollContractEvents(): Promise<void> {
   const contractIds = [...new Set([...INDEXED_CONTRACT_IDS, ...discoveredContractIds])];
   if (!SOROBAN_RPC_URL || contractIds.length === 0) return;
   try {
-    const events = await getEvents(SOROBAN_RPC_URL, contractIds, fromLedger);
+    if (eventsCursor === 0) {
+      const dbCursor = await getLatestIndexedEventLedger(pool);
+      if (dbCursor > 0) {
+        eventsCursor = dbCursor + 1;
+      } else {
+        // Match the Horizon indexer's own "fresh DB starts from latest" convention,
+        // rather than guessing a backfill window — RPC getEvents silently returns
+        // empty (no error) for startLedger values too far behind current, and how
+        // far is "too far" is provider-specific and not worth hardcoding a guess at.
+        eventsCursor = await getLatestRpcLedgerSequence(SOROBAN_RPC_URL);
+        console.log(`Contract event indexing: starting from latest RPC ledger ${eventsCursor}`);
+      }
+    }
+
+    const { events, latestLedger } = await getEvents(SOROBAN_RPC_URL, contractIds, eventsCursor);
     if (events.length > 0) {
-      console.log(`Indexing ${events.length} contract event(s) from ledger ${fromLedger}...`);
+      console.log(`Indexing ${events.length} contract event(s) from ledger ${eventsCursor}...`);
       await insertContractEvents(pool, events);
     }
+    eventsCursor = latestLedger + 1;
   } catch (err) {
     console.error('Contract event polling error:', err);
   }
@@ -143,16 +188,12 @@ async function run() {
       loopTick++;
 
       const latest = await getLatestLedgerSequence(HORIZON_URL);
-      const rangeStart = cursor + 1;
-
       for (let seq = cursor + 1; seq <= latest; seq++) {
         await fetchAndIndexLedgerWithRetry(seq);
         cursor = seq;
       }
 
-      if (cursor >= rangeStart) {
-        await pollContractEvents(rangeStart);
-      }
+      await pollContractEvents();
     } catch (err) {
       console.error('Indexer error:', err);
     }

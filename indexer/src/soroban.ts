@@ -33,8 +33,14 @@ interface RpcEventRecord {
   value: string; // base64 XDR ScVal
 }
 
-interface GetEventsResult {
+interface RpcGetEventsResult {
   events?: RpcEventRecord[];
+  latestLedger: number;
+}
+
+export interface GetEventsResult {
+  events: ContractEvent[];
+  /** The RPC's current ledger at call time — use to advance the polling cursor. */
   latestLedger: number;
 }
 
@@ -64,22 +70,25 @@ async function rpcCall<T>(rpcUrl: string, method: string, params: Record<string,
 
 /**
  * Fetches contract events for the given contract IDs starting at startLedger.
- * Returns [] if none of the contract IDs have emitted events in range.
+ * events is [] if none of the contract IDs emitted anything in range —
+ * latestLedger is still returned so the caller can advance its cursor.
  */
 export async function getEvents(
   rpcUrl: string,
   contractIds: string[],
   startLedger: number
-): Promise<ContractEvent[]> {
-  if (contractIds.length === 0) return [];
+): Promise<GetEventsResult> {
+  if (contractIds.length === 0) {
+    return { events: [], latestLedger: startLedger };
+  }
 
-  const result = await rpcCall<GetEventsResult>(rpcUrl, 'getEvents', {
+  const result = await rpcCall<RpcGetEventsResult>(rpcUrl, 'getEvents', {
     startLedger,
     filters: [{ type: 'contract', contractIds }],
     pagination: { limit: 200 },
   });
 
-  return (result.events ?? []).map(record => ({
+  const events = (result.events ?? []).map(record => ({
     id: record.id,
     type: record.type,
     contractId: record.contractId,
@@ -89,4 +98,12 @@ export async function getEvents(
     topics: record.topic.map(t => JSON.stringify(decodeScVal(t))),
     value: decodeScVal(record.value),
   }));
+
+  return { events, latestLedger: result.latestLedger };
+}
+
+/** The RPC's current ledger — used to seed the event-polling cursor on first run. */
+export async function getLatestLedgerSequence(rpcUrl: string): Promise<number> {
+  const result = await rpcCall<{ sequence: number }>(rpcUrl, 'getLatestLedger', {});
+  return result.sequence;
 }

@@ -41,14 +41,41 @@ export interface Balance {
   selling_liabilities?: string;
 }
 
+const MAX_RETRIES = 3;
+const BASE_BACKOFF_MS = 300;
+
+/**
+ * Fetches from Horizon with 429-aware retry (respecting Retry-After when
+ * present). Logs failures instead of swallowing them silently — a prior
+ * silent-null-on-any-failure here made a Horizon rate limit indistinguishable
+ * from a genuinely nonexistent account.
+ */
 async function get<T>(path: string): Promise<T | null> {
-  try {
-    const res = await fetch(`${HORIZON}${path}`);
-    if (!res.ok) return null;
-    return res.json() as Promise<T>;
-  } catch {
-    return null;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(`${HORIZON}${path}`);
+      if (res.ok) return res.json() as Promise<T>;
+      if (res.status === 404) return null; // genuinely doesn't exist — no point retrying
+
+      if (res.status === 429 && attempt < MAX_RETRIES) {
+        const retryAfter = res.headers.get('Retry-After');
+        const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : BASE_BACKOFF_MS * 2 ** (attempt - 1);
+        console.warn(`Horizon rate-limited (attempt ${attempt}/${MAX_RETRIES}), retrying ${path} in ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+
+      console.warn(`Horizon request failed (${res.status}) for ${path}`);
+      return null;
+    } catch (err) {
+      if (attempt === MAX_RETRIES) {
+        console.warn(`Horizon request errored for ${path}:`, err);
+        return null;
+      }
+      await new Promise(r => setTimeout(r, BASE_BACKOFF_MS * 2 ** (attempt - 1)));
+    }
   }
+  return null;
 }
 
 export async function getRecentTransactions(limit = 20): Promise<HorizonTransaction[]> {
