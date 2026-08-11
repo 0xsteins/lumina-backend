@@ -25,11 +25,15 @@ services:
       DATABASE_URL: postgresql://lumina:lumina_dev@postgres:5432/lumina
       HORIZON_URL: https://horizon.stellar.org
       POLL_INTERVAL_MS: "5000"
-    # Uncomment to start from a specific ledger:
-    # START_LEDGER: "52000000"
-    # Uncomment to enable Soroban contract event indexing:
-    # SOROBAN_RPC_URL: "https://soroban-testnet.stellar.org"
-    # INDEXED_CONTRACT_IDS: "CABC...,CDEF..."
+      # Uncomment to start from a specific ledger:
+      # START_LEDGER: "52000000"
+      # Soroban contract event indexing — enabled by default, pointed at the
+      # deployed testnet Lumina Registry (see contracts/DEPLOY.md in
+      # lumina-contracts). Unset these to disable event indexing entirely.
+      SOROBAN_RPC_URL: "https://soroban-testnet.stellar.org"
+      INDEXED_CONTRACT_IDS: "CAYUDQPV3RKPM3EXDFGI3457FV677JLUCJ4OLKWGCUBPRIHYKXK3WFAZ"
+      REGISTRY_CONTRACT_ID: "CAYUDQPV3RKPM3EXDFGI3457FV677JLUCJ4OLKWGCUBPRIHYKXK3WFAZ"
+      REGISTRY_READ_ACCOUNT: "GBWKFFXZ5CJESIHP2EOID5IOXMF472RO5XOJ36X475D5LJGI3AF5R5KY"
 
   # Lumina GraphQL Server — serves indexed data via GraphQL API
   graphql:

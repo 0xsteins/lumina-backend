@@ -70,9 +70,12 @@ cd graphql-server && npm install && npm run dev
 | `REGISTRY_READ_ACCOUNT` | unset | Any funded G... account used to simulate the registry's read calls — no secret key needed, simulation doesn't sign or submit |
 | `REGISTRY_NETWORK_PASSPHRASE` | Test SDF Network passphrase | Network the registry is deployed on |
 
-Soroban event indexing and registry discovery are both entirely opt-in — the
-indexer behaves exactly as it did before these variables were introduced
-when they're unset. When `REGISTRY_CONTRACT_ID` is set, discovered contract
+Soroban event indexing and registry discovery are both entirely opt-in at
+the code level — the indexer behaves exactly as it did before these
+variables were introduced when they're unset. `docker/docker-compose.yml`
+sets them by default, though, pointed at the deployed testnet registry, so
+`docker compose up` shows real contract events out of the box; unset them
+there to disable it. When `REGISTRY_CONTRACT_ID` is set, discovered contract
 IDs are merged with `INDEXED_CONTRACT_IDS` (the registry is polled roughly
 once a minute, independent of the 5s ledger poll loop).
 
