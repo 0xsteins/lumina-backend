@@ -64,6 +64,7 @@ cd graphql-server && npm install && npm run dev
 | `DATABASE_URL` | `postgresql://localhost:5432/lumina` | |
 | `START_LEDGER` | latest | Only used when the DB is empty |
 | `POLL_INTERVAL_MS` | `5000` | |
+| `HORIZON_MIN_REQUEST_INTERVAL_MS` | `100` | Minimum spacing between outbound Horizon requests, to avoid bursts tripping the per-IP rate limit |
 | `SOROBAN_RPC_URL` | unset | Enables Soroban contract event indexing |
 | `INDEXED_CONTRACT_IDS` | unset | Comma-separated contract IDs to index events for; requires `SOROBAN_RPC_URL` |
 | `REGISTRY_CONTRACT_ID` | unset | Lumina Registry contract to poll for additional contract IDs; requires `SOROBAN_RPC_URL` + `REGISTRY_READ_ACCOUNT` |
