@@ -113,16 +113,32 @@ async function fetchAndIndexLedgerWithRetry(sequence: number): Promise<void> {
   }
 }
 
+/**
+ * The registry's contract_id field is just an Address — nothing stops a
+ * registrant from passing a G... account instead of a real C... contract
+ * (we hit exactly this with our own test data). A single bad entry would
+ * otherwise make the whole getEvents filter error out, breaking event
+ * indexing for every other registered contract too.
+ */
+function isContractAddress(address: string): boolean {
+  return /^C[A-Z0-9]{55}$/.test(address);
+}
+
 /** Refreshes the set of contract IDs discovered from the Lumina Registry, if configured. */
 async function pollRegistry(): Promise<void> {
   if (!SOROBAN_RPC_URL || !REGISTRY_CONTRACT_ID || !REGISTRY_READ_ACCOUNT) return;
   try {
-    discoveredContractIds = await getActiveContracts(
+    const entries = await getActiveContracts(
       SOROBAN_RPC_URL,
       REGISTRY_CONTRACT_ID,
       REGISTRY_READ_ACCOUNT,
       REGISTRY_NETWORK_PASSPHRASE
     );
+    const invalid = entries.filter(id => !isContractAddress(id));
+    if (invalid.length > 0) {
+      console.warn(`Registry discovery: skipping ${invalid.length} registered entr(y/ies) with a non-contract address:`, invalid);
+    }
+    discoveredContractIds = entries.filter(isContractAddress);
     console.log(`Registry discovery: ${discoveredContractIds.length} active contract(s)`);
   } catch (err) {
     console.error('Registry polling error:', err);
