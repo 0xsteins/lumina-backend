@@ -9,8 +9,6 @@ services:
       POSTGRES_DB: lumina
       POSTGRES_USER: lumina
       POSTGRES_PASSWORD: lumina_dev
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ../db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
@@ -45,7 +43,7 @@ services:
       DATABASE_URL: postgresql://lumina:lumina_dev@postgres:5432/lumina
       PORT: "4000"
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
 
 volumes:
   postgres_data:
