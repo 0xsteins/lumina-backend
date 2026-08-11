@@ -25,6 +25,10 @@ services:
       DATABASE_URL: postgresql://lumina:lumina_dev@postgres:5432/lumina
       HORIZON_URL: https://horizon.stellar.org
       POLL_INTERVAL_MS: "5000"
+      # Conservative pacing for anonymous public Horizon access — its
+      # sustained per-IP rate limit is much lower than a burst-only throttle
+      # accounts for (confirmed live: even 10 req/sec sustained 429'd).
+      HORIZON_MIN_REQUEST_INTERVAL_MS: "1000"
       # Uncomment to start from a specific ledger:
       # START_LEDGER: "52000000"
       # Soroban contract event indexing — enabled by default, pointed at the
