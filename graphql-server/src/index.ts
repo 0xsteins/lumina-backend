@@ -11,7 +11,7 @@ import { Pool } from 'pg';
 import { GraphQLError } from 'graphql';
 import { useServer } from 'graphql-ws/lib/use/ws';
 import { WebSocketServer } from 'ws';
-import { Context, resolvers } from './resolvers';
+import { Context, createContext, resolvers } from './resolvers';
 import { LedgerNotifier, SubscriberLimitError } from './pubsub';
 import { subsystem } from './logger';
 import { buildServerHealth, metricsPlugin, samplePool, serverHealthStatusCode } from './observability';
@@ -56,7 +56,7 @@ async function main() {
   const wsCleanup = useServer(
     {
       schema,
-      context: async (): Promise<Context> => ({ pool, notifier }),
+      context: async (): Promise<Context> => createContext(pool, { notifier }),
       onError: (_ctx: unknown, _message: unknown, errors: readonly Error[]) => {
         for (const error of errors) {
           log.error({ err: error.message }, 'subscription error');
@@ -143,7 +143,7 @@ async function main() {
   const middleware = [
     cors(),
     express.json(),
-    expressMiddleware(server, { context: async () => ({ pool }) }),
+    expressMiddleware(server, { context: async () => createContext(pool) }),
   ];
   app.use('/graphql', ...middleware);
   app.use('/', ...middleware);
