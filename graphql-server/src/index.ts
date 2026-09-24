@@ -15,6 +15,12 @@ import { Context, createContext, resolvers } from './resolvers';
 import { LedgerNotifier, SubscriberLimitError } from './pubsub';
 import { subsystem } from './logger';
 import { buildServerHealth, metricsPlugin, samplePool, serverHealthStatusCode } from './observability';
+import { v4 as uuidv4 } from 'uuid'; // TODO: Ensure 'uuid' is a dependency
+
+interface Context extends BaseContext {
+  correlationId: string;
+  requestLogger: ReturnType<typeof subsystem>;
+}
 import {
   listenerConnected,
   metricsContentType,
@@ -22,6 +28,8 @@ import {
   subscriptionsActive,
   subscriptionsRejected,
 } from './metrics';
+import { initTracing, shutdownTracing } from './tracing';
+import { initErrorTracking, shutdownErrorTracking } from './errorTracking';
 
 const log = subsystem('server');
 const startedAt = Date.now();
@@ -44,6 +52,9 @@ const notifier = new LedgerNotifier({
 });
 
 async function main() {
+  initErrorTracking();
+  initTracing();
+
   const app = express();
   const httpServer = createServer(app);
 
@@ -156,6 +167,7 @@ async function main() {
       subscriptions: `ws://localhost:${PORT}/graphql`,
       health: `http://localhost:${PORT}/health`,
       metrics: `http://localhost:${PORT}/metrics`,
+      database: redactUrl(DATABASE_URL),
     },
     'lumina graphql server listening'
   );
@@ -163,7 +175,10 @@ async function main() {
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.on(signal, () => {
       log.info({ signal }, 'shutting down');
-      void server.stop().then(() => process.exit(0));
+      void server.stop()
+        .then(() => shutdownTracing())
+        .then(() => shutdownErrorTracking())
+        .then(() => process.exit(0));
     });
   }
 }
@@ -172,3 +187,14 @@ main().catch(err => {
   log.fatal({ err: err instanceof Error ? err.message : err }, 'failed to start graphql server');
   process.exit(1);
 });
+
+/** Never log a database URL with its password in it. */
+function redactUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.password) parsed.password = '***';
+    return parsed.toString();
+  } catch {
+    return '(unparseable)';
+  }
+}

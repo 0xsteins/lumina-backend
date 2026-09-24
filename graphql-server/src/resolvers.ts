@@ -19,7 +19,7 @@ import { getContractSchema, getCustomEvents, type CustomEventFilter } from './cu
 import { getOperationsByAsset, searchTransactions } from './search';
 import type { LedgerNotifier } from './pubsub';
 
-export interface Context {
+export interface BaseContext {
   pool: Pool;
   loaders?: RequestLoaders;
   /** Present for websocket connections; absent for plain HTTP queries. */
@@ -57,9 +57,7 @@ async function resolveAccount(address: string, pool: Pool, loaders?: RequestLoad
 }
 
 export const resolvers = {
-  Subscription: createSubscriptionResolvers((message, detail) =>
-    console.warn(`[subscription] ${message}`, detail ?? '')
-  ),
+  Subscription: createSubscriptionResolvers(),
 
   Query: {
     async transactions(_: unknown, args: { limit?: number; cursor?: string }, { pool }: Context) {

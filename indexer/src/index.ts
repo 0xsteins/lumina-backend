@@ -40,6 +40,8 @@ import {
   recordIndexedLedger,
 } from './metrics';
 import { startHealthServer, type IndexerState } from './health';
+import { initTracing, shutdownTracing } from './tracing';
+import { initErrorTracking, captureException, shutdownErrorTracking } from './errorTracking';
 
 const log = subsystem('indexer');
 
@@ -297,6 +299,8 @@ async function indexCustomEvents(events: ContractEvent[]): Promise<void> {
 }
 
 async function run() {
+  initErrorTracking();
+  initTracing();
   log.info({ horizon: HORIZON_URL, database: redactUrl(DATABASE_URL), healthPort: HEALTH_PORT }, 'lumina indexer starting');
   startHealthServer({ port: HEALTH_PORT, getState: () => state, pool });
 
@@ -328,6 +332,9 @@ async function run() {
     } catch (err) {
       indexingErrors.inc({ loop: 'main' });
       log.error({ err: message(err) }, 'indexer loop error');
+      if (err instanceof Error) {
+        captureException(err, { loop: 'main', ledger: cursor });
+      }
     }
 
     await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
@@ -337,6 +344,8 @@ async function run() {
 async function shutdown() {
   log.info('shutting down indexer');
   await pool.end();
+  await shutdownTracing();
+  await shutdownErrorTracking();
   process.exit(0);
 }
 
